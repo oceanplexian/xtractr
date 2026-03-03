@@ -452,11 +452,15 @@ func writeTrackFLAC( //nolint:funlen
 	trackSamples := endSample - startSample
 
 	// Create a new StreamInfo for this track.
+	// BlockSizeMin/Max will be rewritten by the encoder on Close().
+	// FrameSizeMin/Max are set to 0 (unknown) because the mewkiz encoder does
+	// not track frame sizes and will not update them on Close(); copying the
+	// source values would be wrong after splitting frames at track boundaries.
 	trackInfo := &meta.StreamInfo{
 		BlockSizeMin:  srcInfo.BlockSizeMin,
 		BlockSizeMax:  srcInfo.BlockSizeMax,
-		FrameSizeMin:  srcInfo.FrameSizeMin,
-		FrameSizeMax:  srcInfo.FrameSizeMax,
+		FrameSizeMin:  0,
+		FrameSizeMax:  0,
 		SampleRate:    srcInfo.SampleRate,
 		NChannels:     srcInfo.NChannels,
 		BitsPerSample: srcInfo.BitsPerSample,
@@ -513,13 +517,14 @@ func writeTrackFLAC( //nolint:funlen
 }
 
 // buildOutputFrame creates a new frame with a subset of samples from the source frame.
+// All output frames are created with HasFixedBlockSize=false (variable block size mode)
+// regardless of the source stream's block size mode. This ensures a consistent encoding
+// throughout the output file: mixing fixed-blocksize frames (which encode a frame number
+// in the header) with variable-blocksize frames (which encode a sample position) produces
+// an invalid FLAC stream that many decoders — including GStreamer's flacparse — will reject.
 func buildOutputFrame(src *frame.Frame, offset, count, origSamples int) *frame.Frame {
-	// If the frame is entirely within the track, just return it as-is.
-	if offset == 0 && count == origSamples {
-		return src
-	}
-
-	// We need to slice the samples. First correlate to get proper L/R samples.
+	// Always correlate to get proper L/R samples before slicing.
+	// Correlate is a no-op when the frame is already in correlated form.
 	src.Correlate()
 
 	outFrame := &frame.Frame{

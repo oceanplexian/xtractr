@@ -1,6 +1,8 @@
 package xtractr_test
 
 import (
+	"errors"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -396,6 +398,75 @@ func TestCueREMComments(t *testing.T) {
 	_, files, _, err := xtractr.ExtractCUE(xFile)
 	require.NoError(t, err)
 	assert.Len(t, files, 1)
+}
+
+// TestCueVariableBlockSizeConsistency verifies that all frames in every split
+// track file use variable-block-size encoding (HasFixedBlockSize=false).
+// Mixing fixed- and variable-blocksize frames in one file is invalid FLAC:
+// the two modes encode different values in the "frame/sample number" field of
+// the frame header, causing decoders such as GStreamer's flacparse to reject
+// the file with a stream error.
+func TestCueVariableBlockSizeConsistency(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	outputDir := filepath.Join(tmpDir, "output")
+
+	// Use a block size that will not align perfectly with track boundaries so
+	// that the first frame of track 2 is a boundary-split (partial) frame.
+	// 44100 samples/s * 1 minute = 2646000 samples; block size 4096 means
+	// the track boundary at sample 2646000 falls mid-frame.
+	totalSamples := uint64(2 * 60 * testSampleRate) // 2 minutes
+	flacPath := filepath.Join(tmpDir, "album.flac")
+	generateTestFLAC(t, flacPath, totalSamples)
+
+	cueContent := strings.Join([]string{
+		`PERFORMER "Artist"`,
+		`TITLE "Album"`,
+		`FILE "album.flac" WAVE`,
+		`  TRACK 01 AUDIO`,
+		`    TITLE "Track One"`,
+		`    INDEX 01 00:00:00`,
+		`  TRACK 02 AUDIO`,
+		`    TITLE "Track Two"`,
+		`    INDEX 01 01:00:00`,
+	}, "\n") + "\n"
+	cuePath := filepath.Join(tmpDir, "album.cue")
+	require.NoError(t, os.WriteFile(cuePath, []byte(cueContent), 0o600))
+
+	xFile := &xtractr.XFile{
+		FilePath:  cuePath,
+		OutputDir: outputDir,
+		FileMode:  0o600,
+		DirMode:   0o755,
+	}
+
+	_, files, _, err := xtractr.ExtractCUE(xFile)
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+
+	for _, trackPath := range files {
+		f, err := os.Open(trackPath)
+		require.NoError(t, err, "opening track: %s", trackPath)
+
+		stream, err := flac.New(f)
+		require.NoError(t, err, "parsing track: %s", trackPath)
+
+		for {
+			frm, err := stream.ParseNext()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err, "reading frame from: %s", trackPath)
+			assert.False(t, frm.HasFixedBlockSize,
+				"frame in %s uses fixed-blocksize encoding; "+
+					"all frames must use variable-blocksize (HasFixedBlockSize=false) "+
+					"or decoders like GStreamer's flacparse will reject the file",
+				filepath.Base(trackPath))
+		}
+
+		require.NoError(t, f.Close())
+	}
 }
 
 func TestCueSupportedExtensions(t *testing.T) {
