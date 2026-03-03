@@ -484,7 +484,6 @@ func writeTrackFLAC( //nolint:funlen
 		clipStart := max(srcFrame.sampleStart, startSample)
 		clipEnd := min(srcFrame.sampleEnd, endSample)
 
-		origSamples := int(srcFrame.sampleEnd - srcFrame.sampleStart)
 		offsetInFrame := int(clipStart - srcFrame.sampleStart)
 		samplesToTake := int(clipEnd - clipStart)
 
@@ -492,7 +491,7 @@ func writeTrackFLAC( //nolint:funlen
 			continue
 		}
 
-		outFrame := buildOutputFrame(srcFrame.frame, offsetInFrame, samplesToTake, origSamples)
+		outFrame := buildOutputFrame(srcFrame.frame, offsetInFrame, samplesToTake)
 
 		err = enc.WriteFrame(outFrame)
 		if err != nil {
@@ -522,7 +521,7 @@ func writeTrackFLAC( //nolint:funlen
 // throughout the output file: mixing fixed-blocksize frames (which encode a frame number
 // in the header) with variable-blocksize frames (which encode a sample position) produces
 // an invalid FLAC stream that many decoders — including GStreamer's flacparse — will reject.
-func buildOutputFrame(src *frame.Frame, offset, count, origSamples int) *frame.Frame {
+func buildOutputFrame(src *frame.Frame, offset, count int) *frame.Frame {
 	// Always correlate to get proper L/R samples before slicing.
 	// Correlate is a no-op when the frame is already in correlated form.
 	src.Correlate()

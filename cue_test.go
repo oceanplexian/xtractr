@@ -447,10 +447,10 @@ func TestCueVariableBlockSizeConsistency(t *testing.T) {
 	require.Len(t, files, 2)
 
 	for _, trackPath := range files {
-		f, err := os.Open(trackPath)
+		trackFile, err := os.Open(trackPath)
 		require.NoError(t, err, "opening track: %s", trackPath)
 
-		stream, err := flac.New(f)
+		stream, err := flac.New(trackFile)
 		require.NoError(t, err, "parsing track: %s", trackPath)
 
 		for {
@@ -458,6 +458,7 @@ func TestCueVariableBlockSizeConsistency(t *testing.T) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
+
 			require.NoError(t, err, "reading frame from: %s", trackPath)
 			assert.False(t, frm.HasFixedBlockSize,
 				"frame in %s uses fixed-blocksize encoding; "+
@@ -466,7 +467,7 @@ func TestCueVariableBlockSizeConsistency(t *testing.T) {
 				filepath.Base(trackPath))
 		}
 
-		require.NoError(t, f.Close())
+		require.NoError(t, trackFile.Close())
 	}
 }
 
@@ -501,7 +502,7 @@ func TestCueSplitRealFLAC(t *testing.T) {
 	// sine-tone segments at different frequencies (440, 523, 659 Hz).
 	// ffmpeg's FLAC encoder always writes fixed-blocksize streams, which is
 	// what triggers the bug in the un-patched code.
-	cmd := exec.Command(ffmpeg, //nolint:gosec
+	cmd := exec.CommandContext(t.Context(), ffmpeg, //nolint:gosec
 		"-y",
 		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30",
 		"-f", "lavfi", "-i", "sine=frequency=523:sample_rate=44100:duration=30",
@@ -550,20 +551,22 @@ func TestCueSplitRealFLAC(t *testing.T) {
 	assert.Len(t, archiveList, 2)
 
 	for _, trackPath := range files {
-		f, err := os.Open(trackPath)
+		trackFile, err := os.Open(trackPath)
 		require.NoError(t, err)
 
-		stream, err := flac.New(f)
+		stream, err := flac.New(trackFile)
 		require.NoError(t, err, "flac.New failed for %s", filepath.Base(trackPath))
 
 		// Every frame in the output must use variable-blocksize encoding.
 		// Mixing fixed- and variable-blocksize frames produces an invalid file.
 		frameIdx := 0
+
 		for {
 			frm, err := stream.ParseNext()
 			if errors.Is(err, io.EOF) {
 				break
 			}
+
 			require.NoError(t, err)
 			assert.False(t, frm.HasFixedBlockSize,
 				"frame %d in %s uses fixed-blocksize encoding; "+
@@ -572,7 +575,7 @@ func TestCueSplitRealFLAC(t *testing.T) {
 			frameIdx++
 		}
 
-		require.NoError(t, f.Close())
+		require.NoError(t, trackFile.Close())
 	}
 }
 
@@ -582,11 +585,12 @@ func TestCueSplitRealFLAC(t *testing.T) {
 func requireFixedBlocksizeFLAC(t *testing.T, path string) {
 	t.Helper()
 
-	f, err := os.Open(path)
+	srcFile, err := os.Open(path)
 	require.NoError(t, err)
-	defer f.Close()
 
-	stream, err := flac.New(f)
+	defer srcFile.Close()
+
+	stream, err := flac.New(srcFile)
 	require.NoError(t, err)
 
 	frm, err := stream.ParseNext()
